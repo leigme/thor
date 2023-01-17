@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -60,12 +61,18 @@ func init() {
 	if err != nil {
 		log.Fatalf("create log dir is err: %s\n", err)
 	}
-	logger = zapLog.NewLogger(logPath)
+	lookPath, err := exec.LookPath(os.Args[0])
+	if err != nil {
+		log.Fatalf("look path is err: %s\n", err)
+	}
+	logFile := fmt.Sprintf("%s.log", filepath.Base(lookPath))
+	logger = zapLog.NewLogger(filepath.Join(logPath, logFile))
 }
 
 func main() {
 	defer logger.Sync()
-	r := gin.Default()
+	r := gin.New()
+	r.Use(zapLog.GinLogger(), zapLog.GinRecovery(true))
 	r.GET("/running", func(c *gin.Context) {
 		c.JSON(http.StatusOK, "running")
 	})
