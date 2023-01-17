@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	zapLog "github.com/leigme/thor/logger"
+	"go.uber.org/zap"
 	"log"
 	"net/http"
 	"os"
@@ -19,7 +21,8 @@ import (
 const TypeSplit = "|"
 
 var (
-	conf *config
+	conf   *config
+	logger *zap.SugaredLogger
 )
 
 type config struct {
@@ -52,9 +55,16 @@ func init() {
 	if err != nil || !fs.IsDir() {
 		log.Fatalf("file dir is err: %s\n", err)
 	}
+	logPath := filepath.Join(conf.savePath, "log")
+	err = os.MkdirAll(logPath, os.ModePerm)
+	if err != nil {
+		log.Fatalf("create log dir is err: %s\n", err)
+	}
+	logger = zapLog.NewLogger(logPath)
 }
 
 func main() {
+	defer logger.Sync()
 	r := gin.Default()
 	r.GET("/running", func(c *gin.Context) {
 		c.JSON(http.StatusOK, "running")
@@ -63,7 +73,7 @@ func main() {
 	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.port), Handler: r}
 	go func() {
 		if err := s.ListenAndServe(); err != nil {
-			log.Printf("Listen err: %s\n", err)
+			logger.Errorf("Listen err: %s\n", err)
 		}
 	}()
 	go gracefulExit(s)
@@ -74,13 +84,13 @@ func gracefulExit(srv *http.Server) {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGSYS, syscall.SIGTERM, os.Kill)
 	sig := <-signalChan
-	log.Printf("catch signal, %+v", sig)
+	logger.Infof("catch signal, %+v", sig)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second) // 4秒后退出
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal("Server Shutdown:", err)
+		logger.Fatal("Server Shutdown:", err)
 	}
-	log.Printf("server exiting")
+	logger.Info("server exiting")
 	close(conf.exitCh)
 }
 
