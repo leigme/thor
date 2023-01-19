@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -14,19 +15,25 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const TypeSplit = "|"
+const (
+	ServerPort = "thor.server.port"
+	SavePath   = "thor.save.path"
+	FileExt    = "thor.file.ext"
+	TypeSplit  = "|"
+)
 
 var (
-	conf   *config
+	conf   *Config
 	logger *zap.SugaredLogger
 )
 
-type config struct {
+type Config struct {
 	port     int
 	savePath string
 	fileExt  string
@@ -34,39 +41,21 @@ type config struct {
 }
 
 func init() {
-	conf = &config{
-		exitCh: make(chan int),
-	}
-	flag.IntVar(&conf.port, "p", 8080, "web service port")
-	flag.StringVar(&conf.savePath, "d", "", "save files dir")
-	flag.StringVar(&conf.fileExt, "t", "*", "upload file ext")
+	InitConfig()
+	flag.IntVar(&conf.port, "p", conf.port, "web server port")
+	flag.StringVar(&conf.savePath, "d", conf.savePath, "save files dir")
+	flag.StringVar(&conf.fileExt, "t", conf.fileExt, "upload file ext")
 	flag.Parse()
-	if strings.EqualFold(conf.savePath, "") {
-		userHome, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatalf("user home dir is err: %s\n", err)
-		}
-		conf.savePath = filepath.Join(userHome, ".thor")
+	log.Printf("config: %s\n", conf.toString())
+	fs, err := os.Stat(conf.savePath)
+	if err != nil && os.IsNotExist(err) {
 		err = os.MkdirAll(conf.savePath, os.ModePerm)
 		if err != nil {
-			log.Fatalf("create save dir is err: %s\n", err)
+			log.Fatalf("create save path is err: %s\n", err)
 		}
+		log.Fatalf("file dir: %s is err: %s\n", fs.Name(), err)
 	}
-	fs, err := os.Stat(conf.savePath)
-	if err != nil || !fs.IsDir() {
-		log.Fatalf("file dir is err: %s\n", err)
-	}
-	logPath := filepath.Join(conf.savePath, "log")
-	err = os.MkdirAll(logPath, os.ModePerm)
-	if err != nil {
-		log.Fatalf("create log dir is err: %s\n", err)
-	}
-	lookPath, err := exec.LookPath(os.Args[0])
-	if err != nil {
-		log.Fatalf("look path is err: %s\n", err)
-	}
-	logFile := fmt.Sprintf("%s.log", filepath.Base(lookPath))
-	logger = zapLog.NewLogger(filepath.Join(logPath, logFile))
+	InitLogger(conf.savePath)
 }
 
 func main() {
@@ -127,7 +116,57 @@ func handlerUpload(c *gin.Context) {
 	})
 }
 
-func (c *config) typeFilter(fileExt string) bool {
+func InitConfig() {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("user home dir is err: %s\n", err)
+	}
+	sp := filepath.Join(userHome, ".thor")
+	err = os.MkdirAll(sp, os.ModePerm)
+	if err != nil {
+		log.Fatalf("create save dir is err: %s\n", err)
+	}
+	fs, err := os.Stat(sp)
+	if err != nil || !fs.IsDir() {
+		log.Fatalf("save path is not dir: %s\n", err)
+	}
+	conf = &Config{
+		port:     8080,
+		savePath: sp,
+		fileExt:  "*",
+		exitCh:   make(chan int),
+	}
+	p := os.Getenv(ServerPort)
+	if !strings.EqualFold(p, "") {
+		if pi, err := strconv.Atoi(p); err == nil {
+			conf.port = pi
+		}
+	}
+	savePath := os.Getenv(SavePath)
+	if !strings.EqualFold(savePath, "") {
+		conf.savePath = savePath
+	}
+	fileExt := os.Getenv(FileExt)
+	if !strings.EqualFold(fileExt, "") {
+		conf.fileExt = fileExt
+	}
+}
+
+func InitLogger(workPath string) {
+	logPath := filepath.Join(workPath, "log")
+	err := os.MkdirAll(logPath, os.ModePerm)
+	if err != nil {
+		log.Fatalf("create log dir is err: %s\n", err)
+	}
+	lookPath, err := exec.LookPath(os.Args[0])
+	if err != nil {
+		log.Fatalf("look path is err: %s\n", err)
+	}
+	logFile := fmt.Sprintf("%s.log", filepath.Base(lookPath))
+	logger = zapLog.NewLogger(filepath.Join(logPath, logFile))
+}
+
+func (c *Config) typeFilter(fileExt string) bool {
 	if strings.EqualFold(c.fileExt, "*") {
 		return true
 	}
@@ -138,4 +177,16 @@ func (c *config) typeFilter(fileExt string) bool {
 		}
 	}
 	return false
+}
+
+func (c *Config) toString() string {
+	m := make(map[string]string, 3)
+	m["port"] = strconv.Itoa(c.port)
+	m["savePath"] = c.savePath
+	m["fileExt"] = c.fileExt
+	data, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
