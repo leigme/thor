@@ -45,20 +45,12 @@ func init() {
 	flag.IntVar(&conf.port, "p", conf.port, "web server port")
 	flag.StringVar(&conf.savePath, "d", conf.savePath, "save files dir")
 	flag.StringVar(&conf.fileExt, "t", conf.fileExt, "upload file ext")
-	flag.Parse()
-	log.Printf("config: %s\n", conf.toString())
-	fs, err := os.Stat(conf.savePath)
-	if err != nil && os.IsNotExist(err) {
-		err = os.MkdirAll(conf.savePath, os.ModePerm)
-		if err != nil {
-			log.Fatalf("create save path is err: %s\n", err)
-		}
-		log.Fatalf("file dir: %s is err: %s\n", fs.Name(), err)
-	}
-	InitLogger(conf.savePath)
 }
 
 func main() {
+	flag.Parse()
+	log.Printf("config: %s\n", conf.toString())
+	InitLogger(conf.savePath)
 	defer logger.Sync()
 	r := gin.New()
 	r.Use(zapLog.GinLogger(), zapLog.GinRecovery(true))
@@ -107,6 +99,24 @@ func handlerUpload(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 10003, "msg": err.Error()})
 		return
 	}
+	srcMd5 := c.PostForm("md5")
+	if !strings.EqualFold(srcMd5, "") {
+		dstMd5, err := FileMD5(filename)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 10004, "msg": err.Error()})
+			return
+		}
+		if !strings.EqualFold(srcMd5, dstMd5) {
+			errMsg := "file md5 verification fails"
+			err := os.Remove(filename)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": errMsg + " " + err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": errMsg})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"code": 10000,
 		"msg":  "upload success",
@@ -153,8 +163,12 @@ func InitConfig() {
 }
 
 func InitLogger(workPath string) {
+	fs, err := os.Stat(conf.savePath)
+	if err != nil || !fs.IsDir() {
+		log.Fatalf("file dir: %s is err: %s\n", fs.Name(), err)
+	}
 	logPath := filepath.Join(workPath, "log")
-	err := os.MkdirAll(logPath, os.ModePerm)
+	err = os.MkdirAll(logPath, os.ModePerm)
 	if err != nil {
 		log.Fatalf("create log dir is err: %s\n", err)
 	}
