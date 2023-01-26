@@ -6,15 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	zapLog "github.com/leigme/thor/logger"
-	"go.uber.org/zap"
 	"log"
+	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,8 +30,7 @@ const (
 )
 
 var (
-	conf   *Config
-	logger *zap.SugaredLogger
+	conf *Config
 )
 
 type Config struct {
@@ -50,10 +50,22 @@ func init() {
 func main() {
 	flag.Parse()
 	log.Printf("config: %s\n", conf.toString())
-	InitLogger(conf.savePath)
-	defer logger.Sync()
+	var (
+		lf  *os.File
+		err error
+	)
+	logFile := NewLogger(conf.savePath)
+	lf, err = os.Open(logFile)
+	if err != nil && os.IsNotExist(err) {
+		lf, err = os.Create(logFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	defer lf.Close()
+	log.SetOutput(lf)
 	r := gin.New()
-	r.Use(zapLog.GinLogger(), zapLog.GinRecovery(true))
+	r.Use(ginLogger(), ginRecovery(true))
 	r.GET("/running", func(c *gin.Context) {
 		c.JSON(http.StatusOK, "running")
 	})
@@ -74,8 +86,8 @@ func main() {
 	r.POST("/upload", handlerUpload)
 	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.port), Handler: r}
 	go func() {
-		if err := s.ListenAndServe(); err != nil {
-			logger.Errorf("Listen err: %s\n", err)
+		if err = s.ListenAndServe(); err != nil {
+			log.Fatalf("Listen err: %s\n", err)
 		}
 	}()
 	go gracefulExit(s)
@@ -86,13 +98,13 @@ func gracefulExit(srv *http.Server) {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGSYS, syscall.SIGTERM, os.Kill)
 	sig := <-signalChan
-	logger.Infof("catch signal, %+v", sig)
+	log.Printf("catch signal, %+v\n", sig)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second) // 4秒后退出
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		logger.Fatal("Server Shutdown:", err)
+		log.Fatal("Server Shutdown:", err)
 	}
-	logger.Info("server exiting")
+	log.Println("server exiting")
 	close(conf.exitCh)
 }
 
@@ -186,7 +198,8 @@ func InitConfig() {
 	}
 }
 
-func InitLogger(workPath string) {
+func NewLogger(workPath string) string {
+	log.SetFlags(log.Lshortfile | log.Ldate | log.Lmicroseconds)
 	fs, err := os.Stat(conf.savePath)
 	if err != nil || !fs.IsDir() {
 		log.Fatalf("file dir: %s is err: %s\n", fs.Name(), err)
@@ -201,7 +214,7 @@ func InitLogger(workPath string) {
 		log.Fatalf("look path is err: %s\n", err)
 	}
 	logFile := fmt.Sprintf("%s.log", filepath.Base(lookPath))
-	logger = zapLog.NewLogger(filepath.Join(logPath, logFile))
+	return filepath.Join(conf.savePath, "log", logFile)
 }
 
 func (c *Config) typeFilter(fileExt string) bool {
@@ -227,4 +240,73 @@ func (c *Config) toString() string {
 		return ""
 	}
 	return string(data)
+}
+
+// GinLogger 接收gin框架默认的日志
+func ginLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		query := c.Request.URL.RawQuery
+		c.Next()
+
+		cost := time.Since(start)
+		log.Println(path,
+			fmt.Sprint("status", c.Writer.Status()),
+			fmt.Sprint("method", c.Request.Method),
+			fmt.Sprint("path", path),
+			fmt.Sprint("query", query),
+			fmt.Sprint("ip", c.ClientIP()),
+			fmt.Sprint("user-agent", c.Request.UserAgent()),
+			fmt.Sprint("errors", c.Errors.ByType(gin.ErrorTypePrivate).String()),
+			fmt.Sprint("cost", cost),
+		)
+	}
+}
+
+// GinRecovery recover掉项目可能出现的panic，并使用zap记录相关日志
+func ginRecovery(stack bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				// Check for a broken connection, as it is not really a
+				// condition that warrants a panic stack trace.
+				var brokenPipe bool
+				if ne, ok := err.(*net.OpError); ok {
+					if se, ok := ne.Err.(*os.SyscallError); ok {
+						if strings.Contains(strings.ToLower(se.Error()), "broken pipe") || strings.Contains(strings.ToLower(se.Error()), "connection reset by peer") {
+							brokenPipe = true
+						}
+					}
+				}
+
+				httpRequest, _ := httputil.DumpRequest(c.Request, false)
+				if brokenPipe {
+					log.Println(c.Request.URL.Path,
+						fmt.Sprint("error", err),
+						fmt.Sprint("request", string(httpRequest)),
+					)
+					// If the connection is dead, we can't write a status to it.
+					c.Error(err.(error)) // nolint: errcheck
+					c.Abort()
+					return
+				}
+
+				if stack {
+					log.Println("[Recovery from panic]",
+						fmt.Sprint("error", err),
+						fmt.Sprint("request", string(httpRequest)),
+						fmt.Sprint("stack", string(debug.Stack())),
+					)
+				} else {
+					log.Println("[Recovery from panic]",
+						fmt.Sprint("error", err),
+						fmt.Sprint("request", string(httpRequest)),
+					)
+				}
+				c.AbortWithStatus(http.StatusInternalServerError)
+			}
+		}()
+		c.Next()
+	}
 }
