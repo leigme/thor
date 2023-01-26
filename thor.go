@@ -57,6 +57,20 @@ func main() {
 	r.GET("/running", func(c *gin.Context) {
 		c.JSON(http.StatusOK, "running")
 	})
+	r.GET("/help", func(c *gin.Context) {
+		result := make(map[string][]string, 0)
+		for _, v := range r.Routes() {
+			if strings.EqualFold(v.Path, "/help") {
+				continue
+			}
+			if result[v.Method] == nil {
+				result[v.Method] = []string{v.Path}
+			} else {
+				result[v.Method] = append(result[v.Method], v.Path)
+			}
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	r.POST("/upload", handlerUpload)
 	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.port), Handler: r}
 	go func() {
