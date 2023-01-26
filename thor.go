@@ -93,17 +93,27 @@ func handlerUpload(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 10002, "msg": fmt.Sprintf("upload type: %s not allow", fileExt)})
 		return
 	}
-	filename := filepath.Join(conf.savePath, f.Filename)
-	err = c.SaveUploadedFile(f, filename)
+	saveDir := conf.savePath
+	dir := c.PostForm("dir")
+	if !strings.EqualFold(dir, "") {
+		saveDir = filepath.Join(saveDir, dir)
+	}
+	filename := filepath.Join(saveDir, f.Filename)
+	err = os.MkdirAll(saveDir, os.ModePerm)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 10003, "msg": err.Error()})
+		return
+	}
+	err = c.SaveUploadedFile(f, filename)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 10004, "msg": err.Error()})
 		return
 	}
 	srcMd5 := c.PostForm("md5")
 	if !strings.EqualFold(srcMd5, "") {
 		dstMd5, err := FileMD5(filename)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 10004, "msg": err.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": err.Error()})
 			return
 		}
 		if !strings.EqualFold(srcMd5, dstMd5) {
