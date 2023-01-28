@@ -1,18 +1,29 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
-	"io"
-	"os"
+	"errors"
+	"fmt"
+	"github.com/leigme/thor/config"
+	"mime/multipart"
+	"path"
+	"strings"
 )
 
-func FileMD5(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
+var cfs = []checkFile{checkFileExt, checkFileSize}
+
+type checkFile func(fileHeader *multipart.FileHeader) error
+
+func checkFileExt(fileHeader *multipart.FileHeader) error {
+	fileExt := strings.ToLower(path.Ext(fileHeader.Filename))
+	if conf.TypeFilter(fileExt) {
+		return nil
 	}
-	hash := md5.New()
-	_, _ = io.Copy(hash, file)
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return errors.New(fmt.Sprintf("upload type: %s not allow", fileExt))
+}
+
+func checkFileSize(fileHeader *multipart.FileHeader) error {
+	if fileHeader.Size <= config.Self.FileSize {
+		return nil
+	}
+	return errors.New(fmt.Sprintf("upload file size is: %d than %d, please split and merge\n", fileHeader.Size, config.Self.FileSize))
 }

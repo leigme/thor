@@ -2,59 +2,40 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/leigme/loki/file"
+	"github.com/leigme/thor/config"
+	"github.com/leigme/thor/logger"
 	"log"
-	"net"
+	"mime/multipart"
 	"net/http"
-	"net/http/httputil"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path"
 	"path/filepath"
-	"runtime/debug"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const (
-	ServerPort = "thor.server.port"
-	SavePath   = "thor.save.path"
-	FileExt    = "thor.file.ext"
-	TypeSplit  = "|"
-)
-
 var (
-	conf *Config
+	conf *config.Config
+	lf   *os.File
 )
-
-type Config struct {
-	port     int
-	savePath string
-	fileExt  string
-	exitCh   chan int
-}
 
 func init() {
-	InitConfig()
-	flag.IntVar(&conf.port, "p", conf.port, "web server port")
-	flag.StringVar(&conf.savePath, "d", conf.savePath, "save files dir")
-	flag.StringVar(&conf.fileExt, "t", conf.fileExt, "upload file ext")
+	conf = config.NewConfig()
+	flag.IntVar(&conf.Port, "p", conf.Port, "web server port")
+	flag.StringVar(&conf.SavePath, "d", conf.SavePath, "save files dir")
+	flag.StringVar(&conf.FileExt, "t", conf.FileExt, "upload file ext")
 }
 
 func main() {
 	flag.Parse()
-	log.Printf("config: %s\n", conf.toString())
-	var (
-		lf  *os.File
-		err error
-	)
-	logFile := NewLogger(conf.savePath)
+	log.Printf("config: %s\n", conf.ToString())
+	var err error
+	logFile := logger.NewLogger(conf.SavePath)
 	lf, err = os.Open(logFile)
 	if err != nil && os.IsNotExist(err) {
 		lf, err = os.Create(logFile)
@@ -64,34 +45,8 @@ func main() {
 	}
 	defer lf.Close()
 	log.SetOutput(lf)
-	r := gin.New()
-	r.Use(ginLogger(), ginRecovery(true))
-	r.GET("/running", func(c *gin.Context) {
-		c.JSON(http.StatusOK, "running")
-	})
-	r.GET("/help", func(c *gin.Context) {
-		result := make(map[string][]string, 0)
-		for _, v := range r.Routes() {
-			if strings.EqualFold(v.Path, "/help") {
-				continue
-			}
-			if result[v.Method] == nil {
-				result[v.Method] = []string{v.Path}
-			} else {
-				result[v.Method] = append(result[v.Method], v.Path)
-			}
-		}
-		c.JSON(http.StatusOK, result)
-	})
-	r.POST("/upload", handlerUpload)
-	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.port), Handler: r}
-	go func() {
-		if err = s.ListenAndServe(); err != nil {
-			log.Fatalf("Listen err: %s\n", err)
-		}
-	}()
-	go gracefulExit(s)
-	<-conf.exitCh
+	go InitHttpServer(gracefulExit)
+	<-conf.ExitCh
 }
 
 func gracefulExit(srv *http.Server) {
@@ -105,7 +60,28 @@ func gracefulExit(srv *http.Server) {
 		log.Fatal("Server Shutdown:", err)
 	}
 	log.Println("server exiting")
-	close(conf.exitCh)
+	close(conf.ExitCh)
+}
+
+func handlerRunning(c *gin.Context) {
+	c.JSON(http.StatusOK, "running")
+}
+
+func handlerHelp(gri gin.RoutesInfo) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		result := make(map[string][]string, 0)
+		for _, v := range gri {
+			if strings.EqualFold(v.Path, "/help") {
+				continue
+			}
+			if result[v.Method] == nil {
+				result[v.Method] = []string{v.Path}
+			} else {
+				result[v.Method] = append(result[v.Method], v.Path)
+			}
+		}
+		c.JSON(http.StatusOK, result)
+	}
 }
 
 func handlerUpload(c *gin.Context) {
@@ -114,42 +90,51 @@ func handlerUpload(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 10001, "msg": "upload fail"})
 		return
 	}
-	fileExt := strings.ToLower(path.Ext(f.Filename))
-	if !conf.typeFilter(fileExt) {
-		c.JSON(http.StatusOK, gin.H{"code": 10002, "msg": fmt.Sprintf("upload type: %s not allow", fileExt)})
-		return
+	for _, cf := range cfs {
+		if err = cf(f); err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 10002, "msg": err.Error()})
+			return
+		}
 	}
-	saveDir := conf.savePath
+	saveDir := conf.SavePath
 	dir := c.PostForm("dir")
 	if !strings.EqualFold(dir, "") {
 		saveDir = filepath.Join(saveDir, dir)
 	}
-	filename := filepath.Join(saveDir, f.Filename)
-	err = os.MkdirAll(saveDir, os.ModePerm)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 10003, "msg": err.Error()})
-		return
-	}
-	err = c.SaveUploadedFile(f, filename)
+	filename := filepath.Join(saveDir, "tmp", fmt.Sprint(strings.TrimSuffix(f.Filename, filepath.Ext(f.Filename)), ".tmp"))
+	err = os.MkdirAll(filepath.Dir(filename), os.ModePerm)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 10004, "msg": err.Error()})
 		return
 	}
+	err = c.SaveUploadedFile(f, filename)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": err.Error()})
+		return
+	}
 	srcMd5 := c.PostForm("md5")
 	if !strings.EqualFold(srcMd5, "") {
-		dstMd5, err := FileMD5(filename)
+		tmp := filepath.Dir(filename)
+		srcDir := filepath.Dir(tmp)
+		dst := filepath.Join(srcDir, f.Filename)
+		err = file.Merge(tmp, dst)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": err.Error()})
+			c.JSON(http.StatusOK, gin.H{"code": 10006, "msg": err.Error()})
+			return
+		}
+		dstMd5, err := file.Md5(dst)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 10007, "msg": err.Error()})
 			return
 		}
 		if !strings.EqualFold(srcMd5, dstMd5) {
 			errMsg := "file md5 verification fails"
 			err := os.Remove(filename)
 			if err != nil {
-				c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": errMsg + " " + err.Error()})
+				c.JSON(http.StatusOK, gin.H{"code": 10006, "msg": errMsg + " " + err.Error()})
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{"code": 10005, "msg": errMsg})
+			c.JSON(http.StatusOK, gin.H{"code": 10006, "msg": errMsg})
 			return
 		}
 	}
@@ -162,151 +147,21 @@ func handlerUpload(c *gin.Context) {
 	})
 }
 
-func InitConfig() {
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatalf("user home dir is err: %s\n", err)
-	}
-	sp := filepath.Join(userHome, ".thor")
-	err = os.MkdirAll(sp, os.ModePerm)
-	if err != nil {
-		log.Fatalf("create save dir is err: %s\n", err)
-	}
-	fs, err := os.Stat(sp)
-	if err != nil || !fs.IsDir() {
-		log.Fatalf("save path is not dir: %s\n", err)
-	}
-	conf = &Config{
-		port:     8080,
-		savePath: sp,
-		fileExt:  "*",
-		exitCh:   make(chan int),
-	}
-	p := os.Getenv(ServerPort)
-	if !strings.EqualFold(p, "") {
-		if pi, err := strconv.Atoi(p); err == nil {
-			conf.port = pi
-		}
-	}
-	savePath := os.Getenv(SavePath)
-	if !strings.EqualFold(savePath, "") {
-		conf.savePath = savePath
-	}
-	fileExt := os.Getenv(FileExt)
-	if !strings.EqualFold(fileExt, "") {
-		conf.fileExt = fileExt
-	}
+func createTmpFilesDir(fileHeader *multipart.FileHeader) error {
+	filename := filepath.Join(config.Self.SavePath, "tmp", fileHeader.Filename)
+	fileDir := filepath.Dir(filename)
+	return os.MkdirAll(fileDir, os.ModePerm)
 }
 
-func NewLogger(workPath string) string {
-	log.SetFlags(log.Lshortfile | log.Ldate | log.Lmicroseconds)
-	fs, err := os.Stat(conf.savePath)
-	if err != nil || !fs.IsDir() {
-		log.Fatalf("file dir: %s is err: %s\n", fs.Name(), err)
-	}
-	logPath := filepath.Join(workPath, "log")
-	err = os.MkdirAll(logPath, os.ModePerm)
-	if err != nil {
-		log.Fatalf("create log dir is err: %s\n", err)
-	}
-	lookPath, err := exec.LookPath(os.Args[0])
-	if err != nil {
-		log.Fatalf("look path is err: %s\n", err)
-	}
-	logFile := fmt.Sprintf("%s.log", filepath.Base(lookPath))
-	return filepath.Join(conf.savePath, "log", logFile)
-}
-
-func (c *Config) typeFilter(fileExt string) bool {
-	if strings.EqualFold(c.fileExt, "*") {
-		return true
-	}
-	ext := strings.Split(c.fileExt, TypeSplit)
-	for _, e := range ext {
-		if strings.EqualFold(fileExt, e) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Config) toString() string {
-	m := make(map[string]string, 3)
-	m["port"] = strconv.Itoa(c.port)
-	m["savePath"] = c.savePath
-	m["fileExt"] = c.fileExt
-	data, err := json.Marshal(m)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// GinLogger 接收gin框架默认的日志
-func ginLogger() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
-		c.Next()
-
-		cost := time.Since(start)
-		log.Println(path,
-			fmt.Sprint("status", c.Writer.Status()),
-			fmt.Sprint("method", c.Request.Method),
-			fmt.Sprint("path", path),
-			fmt.Sprint("query", query),
-			fmt.Sprint("ip", c.ClientIP()),
-			fmt.Sprint("user-agent", c.Request.UserAgent()),
-			fmt.Sprint("errors", c.Errors.ByType(gin.ErrorTypePrivate).String()),
-			fmt.Sprint("cost", cost),
-		)
-	}
-}
-
-// GinRecovery recover掉项目可能出现的panic，并使用zap记录相关日志
-func ginRecovery(stack bool) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		defer func() {
-			if err := recover(); err != nil {
-				// Check for a broken connection, as it is not really a
-				// condition that warrants a panic stack trace.
-				var brokenPipe bool
-				if ne, ok := err.(*net.OpError); ok {
-					if se, ok := ne.Err.(*os.SyscallError); ok {
-						if strings.Contains(strings.ToLower(se.Error()), "broken pipe") || strings.Contains(strings.ToLower(se.Error()), "connection reset by peer") {
-							brokenPipe = true
-						}
-					}
-				}
-
-				httpRequest, _ := httputil.DumpRequest(c.Request, false)
-				if brokenPipe {
-					log.Println(c.Request.URL.Path,
-						fmt.Sprint("error", err),
-						fmt.Sprint("request", string(httpRequest)),
-					)
-					// If the connection is dead, we can't write a status to it.
-					c.Error(err.(error)) // nolint: errcheck
-					c.Abort()
-					return
-				}
-
-				if stack {
-					log.Println("[Recovery from panic]",
-						fmt.Sprint("error", err),
-						fmt.Sprint("request", string(httpRequest)),
-						fmt.Sprint("stack", string(debug.Stack())),
-					)
-				} else {
-					log.Println("[Recovery from panic]",
-						fmt.Sprint("error", err),
-						fmt.Sprint("request", string(httpRequest)),
-					)
-				}
-				c.AbortWithStatus(http.StatusInternalServerError)
-			}
-		}()
-		c.Next()
+func InitHttpServer(gracefulExit func(srv *http.Server)) {
+	r := gin.New()
+	r.Use(logger.GinLogger(), logger.GinRecovery(true))
+	r.GET("/running", handlerRunning)
+	r.GET("/help", handlerHelp(r.Routes()))
+	r.POST("/upload", handlerUpload)
+	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.Port), Handler: r}
+	go gracefulExit(s)
+	if err := s.ListenAndServe(); err != nil {
+		log.Fatalf("Listen err: %s\n", err)
 	}
 }
