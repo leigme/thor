@@ -51,7 +51,7 @@ func main() {
 
 func gracefulExit(srv *http.Server) {
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGSYS, syscall.SIGTERM, os.Kill)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGKILL, syscall.SIGTERM, os.Kill)
 	sig := <-signalChan
 	log.Printf("catch signal, %+v\n", sig)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second) // 4秒后退出
