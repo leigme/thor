@@ -9,7 +9,6 @@ import (
 	"github.com/leigme/thor/config"
 	"github.com/leigme/thor/logger"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,13 +34,10 @@ func main() {
 	flag.Parse()
 	log.Printf("config: %s\n", conf.ToString())
 	var err error
-	logFile := logger.NewLogger(conf.SavePath)
-	lf, err = os.Open(logFile)
-	if err != nil && os.IsNotExist(err) {
-		lf, err = os.Create(logFile)
-		if err != nil {
-			log.Fatal(err)
-		}
+	logFile := logger.NewLoggerFile(conf.SavePath)
+	lf, err = os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	if err != nil {
+		log.Fatal(err)
 	}
 	defer lf.Close()
 	log.SetOutput(lf)
@@ -61,6 +57,20 @@ func gracefulExit(srv *http.Server) {
 	}
 	log.Println("server exiting")
 	close(conf.ExitCh)
+}
+
+func InitHttpServer(gracefulExit func(srv *http.Server)) {
+	r := gin.New()
+	r.MaxMultipartMemory = 1 << 20
+	r.Use(logger.GinLogger(), logger.GinRecovery(true))
+	r.GET("/running", handlerRunning)
+	r.POST("/upload", handlerUpload)
+	r.GET("/help", handlerHelp(r.Routes()))
+	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.Port), Handler: r}
+	go gracefulExit(s)
+	if err := s.ListenAndServe(); err != nil {
+		log.Fatalf("Listen err: %s\n", err)
+	}
 }
 
 func handlerRunning(c *gin.Context) {
@@ -97,11 +107,10 @@ func handlerUpload(c *gin.Context) {
 		}
 	}
 	saveDir := conf.SavePath
-	dir := c.PostForm("dir")
-	if !strings.EqualFold(dir, "") {
-		saveDir = filepath.Join(saveDir, dir)
+	if !strings.EqualFold(c.PostForm("dir"), "") {
+		saveDir = filepath.Join(saveDir, c.PostForm("dir"))
 	}
-	filename := filepath.Join(saveDir, "tmp", fmt.Sprint(strings.TrimSuffix(f.Filename, filepath.Ext(f.Filename)), ".tmp"))
+	filename := filepath.Join(saveDir, f.Filename)
 	err = os.MkdirAll(filepath.Dir(filename), os.ModePerm)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 10004, "msg": err.Error()})
@@ -114,22 +123,14 @@ func handlerUpload(c *gin.Context) {
 	}
 	srcMd5 := c.PostForm("md5")
 	if !strings.EqualFold(srcMd5, "") {
-		tmp := filepath.Dir(filename)
-		srcDir := filepath.Dir(tmp)
-		dst := filepath.Join(srcDir, f.Filename)
-		err = file.Merge(tmp, dst)
+		dstMd5, err := file.Md5(filename)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 10006, "msg": err.Error()})
 			return
 		}
-		dstMd5, err := file.Md5(dst)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"code": 10007, "msg": err.Error()})
-			return
-		}
 		if !strings.EqualFold(srcMd5, dstMd5) {
 			errMsg := "file md5 verification fails"
-			err := os.Remove(filename)
+			err = file.Delete(filename)
 			if err != nil {
 				c.JSON(http.StatusOK, gin.H{"code": 10006, "msg": errMsg + " " + err.Error()})
 				return
@@ -145,23 +146,4 @@ func handlerUpload(c *gin.Context) {
 			"save_path": filename,
 		},
 	})
-}
-
-func createTmpFilesDir(fileHeader *multipart.FileHeader) error {
-	filename := filepath.Join(config.Self.SavePath, "tmp", fileHeader.Filename)
-	fileDir := filepath.Dir(filename)
-	return os.MkdirAll(fileDir, os.ModePerm)
-}
-
-func InitHttpServer(gracefulExit func(srv *http.Server)) {
-	r := gin.New()
-	r.Use(logger.GinLogger(), logger.GinRecovery(true))
-	r.GET("/running", handlerRunning)
-	r.GET("/help", handlerHelp(r.Routes()))
-	r.POST("/upload", handlerUpload)
-	s := &http.Server{Addr: fmt.Sprintf(":%d", conf.Port), Handler: r}
-	go gracefulExit(s)
-	if err := s.ListenAndServe(); err != nil {
-		log.Fatalf("Listen err: %s\n", err)
-	}
 }

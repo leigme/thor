@@ -3,36 +3,28 @@ package logger
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/leigme/thor/config"
+	"github.com/leigme/loki/app"
+	"github.com/leigme/loki/file"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
 )
 
-func NewLogger(workPath string) string {
+func NewLoggerFile(workPath string) string {
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Lmicroseconds)
-	fs, err := os.Stat(config.Self.SavePath)
-	if err != nil || !fs.IsDir() {
-		log.Fatalf("file dir: %s is err: %s\n", fs.Name(), err)
-	}
 	logPath := filepath.Join(workPath, "log")
-	err = os.MkdirAll(logPath, os.ModePerm)
+	err := file.CreateDir(logPath)
 	if err != nil {
 		log.Fatalf("create log dir is err: %s\n", err)
 	}
-	lookPath, err := exec.LookPath(os.Args[0])
-	if err != nil {
-		log.Fatalf("look path is err: %s\n", err)
-	}
-	logFile := fmt.Sprintf("%s.log", filepath.Base(lookPath))
-	return filepath.Join(config.Self.SavePath, "log", logFile)
+	logFile := fmt.Sprintf("%s.log", app.Name())
+	return filepath.Join(logPath, logFile)
 }
 
 // GinLogger 接收gin框架默认的日志

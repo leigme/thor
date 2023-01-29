@@ -1,8 +1,8 @@
 package common
 
 const (
-	ServerPort = "thor.server.port"
-	SavePath   = "thor.save.path"
-	FileExt    = "thor.file.ext"
+	ServerPort = "THOR_SERVER_PORT"
+	SavePath   = "THOR_SAVE_PATH"
+	FileExt    = "THOR_FILE_EXT"
 	TypeSplit  = "|"
 )

@@ -1,19 +1,21 @@
-FROM golang:alpine
+FROM golang as build
 
-MAINTAINER leigme
-
-# 为我们的镜像设置必要的环境变量
+ENV CGO_ENABLED 0
 ENV GO111MODULE on
 ENV GOPROXY "https://goproxy.cn,direct"
 
-WORKDIR $GOPATH/src/thor
+# 下载程序
+RUN go install github.com/leig/thor@latest
 
-ADD . ./
+FROM alpine as run
 
-RUN go build -o thor .
+MAINTAINER leigme
+
+# 复制编译完成的程序到用户目录
+COPY --from=build /go/bin/thor /usr/local/bin/thor
 
 # 声明服务端口
 EXPOSE 8080
 
 # 启动容器时运行的命令
-ENTRYPOINT  ["./thor"]
+ENTRYPOINT  ["thor"]
