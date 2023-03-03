@@ -2,62 +2,63 @@ package config
 
 import (
 	"encoding/json"
-	"github.com/leigme/thor/common"
-	"log"
+	"github.com/leigme/loki/app"
+	common "github.com/leigme/thor/common"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-var Self *Config
-
 type Config struct {
-	Port     int
-	SavePath string
-	FileExt  string
-	FileSize int64
-	ExitCh   chan int
+	Port     int    `json:"port"`
+	SavePath string `json:"savePath"`
+	FileExt  string `json:"fileExt"`
+	FileSize int    `json:"fileSize"`
+	FileUnit int    `json:"fileUnit"`
 }
 
-func NewConfig() *Config {
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatalf("user home dir is err: %s\n", err)
-	}
-	sp := filepath.Join(userHome, ".thor")
-	err = os.MkdirAll(sp, os.ModePerm)
-	if err != nil {
-		log.Fatalf("create save dir is err: %s\n", err)
-	}
-	fs, err := os.Stat(sp)
-	if err != nil || !fs.IsDir() {
-		log.Fatalf("save path is not dir: %s\n", err)
-	}
-	Self = &Config{
-		Port:     8080,
-		SavePath: sp,
-		FileExt:  "*",
-		FileSize: 1024 * 1024 * 2048,
-		ExitCh:   make(chan int),
-	}
-	p := os.Getenv(common.ServerPort)
-	if !strings.EqualFold(p, "") {
-		if pi, err := strconv.Atoi(p); err == nil {
-			Self.Port = pi
+var Self *Config
+
+func Get() *Config {
+	if Self == nil {
+		Self = &Config{
+			Port:     8080,
+			SavePath: app.WorkDir(),
+			FileExt:  "*",
+			FileSize: 2,
+			FileUnit: int(common.Mb),
 		}
-	}
-	savePath := os.Getenv(common.SavePath)
-	if !strings.EqualFold(savePath, "") {
-		Self.SavePath = savePath
-	}
-	fileExt := os.Getenv(common.FileExt)
-	if !strings.EqualFold(fileExt, "") {
-		Self.FileExt = fileExt
+		p := os.Getenv(common.ServerPort)
+		if !strings.EqualFold(p, "") {
+			if pi, err := strconv.Atoi(p); err == nil {
+				Self.Port = pi
+			}
+		}
+		savePath := os.Getenv(common.SavePath)
+		if !strings.EqualFold(savePath, "") {
+			Self.SavePath = savePath
+		}
+		fileExt := os.Getenv(common.FileExt)
+		if !strings.EqualFold(fileExt, "") {
+			Self.FileExt = fileExt
+		}
+		fileSize := os.Getenv(common.FileSize)
+		if !strings.EqualFold(fileSize, "") {
+			if fsi, err := strconv.Atoi(fileSize); err == nil {
+				Self.FileSize = fsi
+			}
+		}
+		fileUnit := os.Getenv(common.FileUnit)
+		if !strings.EqualFold(fileUnit, "") {
+			if fui, err := strconv.Atoi(fileUnit); err == nil {
+				Self.FileUnit = fui
+			}
+		}
 	}
 	return Self
 }
 
+// TypeFilter upload file type filter
 func (c *Config) TypeFilter(fileExt string) bool {
 	if strings.EqualFold(c.FileExt, "*") {
 		return true
