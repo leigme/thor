@@ -73,26 +73,6 @@ func (c *Config) Update(src map[string]string) {
 	}
 }
 
-// TypeFilter upload file type filter
-func (c *Config) TypeFilter(fileExt string) bool {
-	if strings.EqualFold(c.FileExt, "*") {
-		return true
-	}
-	ext := strings.Split(c.FileExt, common.TypeSplit)
-	for _, e := range ext {
-		if strings.EqualFold(fileExt, e) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Config) SizeFilter(fileSize int64) bool {
-	fs, _ := strconv.Atoi(c.FileSize)
-	fu, _ := strconv.Atoi(c.FileUnit)
-	return int64(fs*fu) >= fileSize
-}
-
 func (c *Config) ToString() string {
 	data, err := json.Marshal(c)
 	if err != nil {

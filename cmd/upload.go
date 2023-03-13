@@ -15,7 +15,7 @@ var (
 )
 
 func init() {
-	u := &upload{uploader: thor.NewUploader(http.DefaultClient)}
+	u := &upload{client: thor.NewClient(http.DefaultClient)}
 	loki.Add(rootCmd, u, loki.WithFlags([]loki.Flag{
 		{P: &filename, Name: "filename", Shorthand: "f", Usage: "filename"},
 		{P: &addr, Name: "address", Shorthand: "a", Usage: "address"},
@@ -23,7 +23,7 @@ func init() {
 }
 
 type upload struct {
-	uploader thor.Uploader
+	client thor.Client
 }
 
 func (u *upload) Execute() loki.Exec {
@@ -31,7 +31,7 @@ func (u *upload) Execute() loki.Exec {
 		if !strings.HasPrefix(addr, "http") {
 			addr = fmt.Sprintf("http://%s", addr)
 		}
-		err := u.uploader.Upload(filename, addr)
+		err := u.client.Upload(filename, addr)
 		if err != nil {
 			log.Fatal(err)
 		}

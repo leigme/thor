@@ -13,21 +13,21 @@ import (
 	"path/filepath"
 )
 
-type Uploader interface {
+type Client interface {
 	Upload(filename, address string) error
 }
 
-func NewUploader(client *http.Client) Uploader {
-	return &uploader{
-		client: client,
+func NewClient(c *http.Client) Client {
+	return &client{
+		client: c,
 	}
 }
 
-type uploader struct {
+type client struct {
 	client *http.Client
 }
 
-func (u *uploader) Upload(filename string, address string) error {
+func (c *client) Upload(filename string, address string) error {
 	if !file.Exist(filename) {
 		return errors.New(fmt.Sprintf("%s is not a valid file", filename))
 	}
@@ -37,7 +37,7 @@ func (u *uploader) Upload(filename string, address string) error {
 	}
 	req, err := http.NewRequest("POST", address, reader)
 	req.Header.Set("Content-Type", contType)
-	resp, err := u.client.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}
