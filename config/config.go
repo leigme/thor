@@ -2,19 +2,21 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/leigme/loki/app"
 	common "github.com/leigme/thor/common"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 )
 
 type Config struct {
-	Port     int    `json:"port"`
-	SavePath string `json:"savePath"`
-	FileExt  string `json:"fileExt"`
-	FileSize int    `json:"fileSize"`
-	FileUnit int    `json:"fileUnit"`
+	Port     string `json:"port" key:"p"`
+	SaveDir  string `json:"saveDir" key:"d"`
+	FileExt  string `json:"fileExt" key:"e"`
+	FileSize string `json:"fileSize" key:"s"`
+	FileUnit string `json:"fileUnit" key:"u"`
 }
 
 var Self *Config
@@ -22,40 +24,53 @@ var Self *Config
 func Get() *Config {
 	if Self == nil {
 		Self = &Config{
-			Port:     8080,
-			SavePath: app.WorkDir(),
+			Port:     "8080",
+			SaveDir:  app.WorkDir(),
 			FileExt:  "*",
-			FileSize: 2,
-			FileUnit: int(common.Mb),
+			FileSize: "2",
+			FileUnit: strconv.Itoa(int(common.Mb)),
 		}
-		p := os.Getenv(common.ServerPort)
+		p := os.Getenv(string(common.ServerPort))
 		if !strings.EqualFold(p, "") {
-			if pi, err := strconv.Atoi(p); err == nil {
-				Self.Port = pi
+			if _, err := strconv.Atoi(p); err == nil {
+				Self.Port = p
 			}
 		}
-		savePath := os.Getenv(common.SavePath)
-		if !strings.EqualFold(savePath, "") {
-			Self.SavePath = savePath
+		saveDir := os.Getenv(string(common.SaveDir))
+		if !strings.EqualFold(saveDir, "") {
+			Self.SaveDir = saveDir
 		}
-		fileExt := os.Getenv(common.FileExt)
+		fileExt := os.Getenv(string(common.FileExt))
 		if !strings.EqualFold(fileExt, "") {
 			Self.FileExt = fileExt
 		}
-		fileSize := os.Getenv(common.FileSize)
+		fileSize := os.Getenv(string(common.FileSize))
 		if !strings.EqualFold(fileSize, "") {
-			if fsi, err := strconv.Atoi(fileSize); err == nil {
-				Self.FileSize = fsi
+			if _, err := strconv.Atoi(fileSize); err == nil {
+				Self.FileSize = fileSize
 			}
 		}
-		fileUnit := os.Getenv(common.FileUnit)
+		fileUnit := os.Getenv(string(common.FileUnit))
 		if !strings.EqualFold(fileUnit, "") {
-			if fui, err := strconv.Atoi(fileUnit); err == nil {
-				Self.FileUnit = fui
+			if _, err := strconv.Atoi(fileUnit); err == nil {
+				Self.FileUnit = fileUnit
 			}
 		}
 	}
 	return Self
+}
+
+func (c *Config) Update(src map[string]string) {
+	cType := reflect.TypeOf(c).Elem()
+	fmt.Println(cType.NumField())
+	for i := 0; i < cType.NumField(); i++ {
+		fieldTag := cType.Field(i).Tag
+		if value, ok := fieldTag.Lookup("key"); ok {
+			if value, ok = src[value]; ok {
+				reflect.ValueOf(c).Elem().FieldByIndex([]int{i}).SetString(value)
+			}
+		}
+	}
 }
 
 // TypeFilter upload file type filter
@@ -72,14 +87,16 @@ func (c *Config) TypeFilter(fileExt string) bool {
 	return false
 }
 
+func (c *Config) SizeFilter(fileSize int64) bool {
+	fs, _ := strconv.Atoi(c.FileSize)
+	fu, _ := strconv.Atoi(c.FileUnit)
+	return int64(fs*fu) >= fileSize
+}
+
 func (c *Config) ToString() string {
-	m := make(map[string]string, 3)
-	m["port"] = strconv.Itoa(c.Port)
-	m["savePath"] = c.SavePath
-	m["fileExt"] = c.FileExt
-	data, err := json.Marshal(m)
+	data, err := json.Marshal(c)
 	if err != nil {
-		return ""
+		return "{}"
 	}
 	return string(data)
 }

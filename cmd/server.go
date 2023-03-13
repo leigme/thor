@@ -15,14 +15,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
 func init() {
-	loki.Add(rootCmd, &server{
+	s := &server{
 		c: config.Get(),
-	})
+	}
+	loki.Add(rootCmd, s,
+		loki.WithFlags([]loki.Flag{
+			{P: &s.c.Port, Name: "port", Shorthand: "p", Value: s.c.Port, Usage: "server port"},
+			{P: &s.c.SaveDir, Name: "dir", Shorthand: "d", Value: s.c.SaveDir, Usage: "save directory"},
+			{P: &s.c.FileExt, Name: "ext", Shorthand: "e", Value: s.c.FileExt, Usage: "file ext"},
+			{P: &s.c.FileSize, Name: "size", Shorthand: "s", Value: s.c.FileSize, Usage: "file size"},
+			{P: &s.c.FileUnit, Name: "unit", Shorthand: "u", Value: s.c.FileUnit, Usage: "file unit"},
+		}),
+	)
 }
 
 type server struct {
@@ -31,19 +39,12 @@ type server struct {
 
 func (s *server) Execute() loki.Exec {
 	return func(cmd *cobra.Command, args []string) {
-		if len(args) > 0 {
-			p, err := strconv.Atoi(args[0])
-			if err != nil {
-				log.Fatal(errors.New("server port failed to parse"))
-			}
-			s.c.Port = p
-		}
 		r := gin.Default()
-		r.StaticFS(string(url.List), http.Dir(s.c.SavePath))
+		r.StaticFS(string(url.List), http.Dir(s.c.SaveDir))
 		r.GET(string(url.Running), handlerRunning)
 		r.POST(string(url.Upload), handlerUpload(s.c))
 		r.GET(string(url.Help), handlerHelp(r.Routes()))
-		err := r.Run(fmt.Sprintf(":%d", s.c.Port))
+		err := r.Run(fmt.Sprintf(":%s", s.c.Port))
 		if err != nil {
 			log.Fatal(errors.Unwrap(err))
 		}
@@ -82,12 +83,12 @@ func handlerUpload(config *config.Config) func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"code": 10002, "msg": fmt.Sprintf("file type is not %s", config.FileExt)})
 			return
 		}
-		if int64(config.FileSize*config.FileUnit) < h.Size {
+		if !config.SizeFilter(h.Size) {
 			c.JSON(http.StatusOK, gin.H{"code": 10003, "msg": fmt.Sprintf("file size must less: %d * %d", config.FileSize, config.FileUnit)})
 			return
 		}
-		filename := filepath.Join(config.SavePath, h.Filename)
-		dstFile, err := os.Open(filename)
+		filename := filepath.Join(config.SaveDir, h.Filename)
+		dstFile, err := os.Create(filename)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 10004, "msg": "create file failed"})
 			return
