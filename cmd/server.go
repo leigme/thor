@@ -4,7 +4,7 @@ import (
 	"context"
 	loki "github.com/leigme/loki/cobra"
 	"github.com/leigme/thor/config"
-	"github.com/leigme/thor/thor"
+	"github.com/leigme/thor/service"
 	"github.com/spf13/cobra"
 	"os"
 	"os/signal"
@@ -36,12 +36,12 @@ func (s *server) Execute() loki.Exec {
 		c := make(chan os.Signal)
 		signal.Notify(c, syscall.SIGTERM, syscall.SIGKILL)
 		ctx, cancel := context.WithCancel(context.Background())
-		ts := thor.NewServer(
-			thor.WithPort(str2Int(s.c.Port)),
-			thor.WithSaveDir(s.c.SaveDir),
-			thor.WithFileExt(s.c.FileExt),
-			thor.WithFileSize(str2Int(s.c.FileExt)),
-			thor.WithFileUnit(str2Int(s.c.FileSize)))
+		ts := service.NewServer(
+			service.WithPort(str2Int(s.c.Port)),
+			service.WithSaveDir(s.c.SaveDir),
+			service.WithFileExt(s.c.FileExt),
+			service.WithFileSize(str2Int(s.c.FileExt)),
+			service.WithFileUnit(str2Int(s.c.FileSize)))
 		ts.Start(ctx.Done())
 		<-c
 		cancel()
