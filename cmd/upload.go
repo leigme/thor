@@ -6,7 +6,6 @@ import (
 	"github.com/leigme/thor/thor"
 	"github.com/spf13/cobra"
 	"log"
-	"net/http"
 	"strings"
 )
 
@@ -15,7 +14,7 @@ var (
 )
 
 func init() {
-	u := &upload{client: thor.NewClient(http.DefaultClient)}
+	u := &upload{client: thor.NewClient()}
 	loki.Add(rootCmd, u, loki.WithFlags([]loki.Flag{
 		{P: &filename, Name: "filename", Shorthand: "f", Usage: "filename"},
 		{P: &addr, Name: "address", Shorthand: "a", Usage: "address"},

@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/leigme/loki/app"
 	"github.com/leigme/loki/file"
 	"github.com/leigme/thor/common"
 	"github.com/leigme/thor/common/param"
 	"github.com/leigme/thor/common/url"
-	"github.com/leigme/thor/config"
 	"io"
 	"log"
 	"net/http"
@@ -25,13 +25,65 @@ type Server interface {
 	Start(stopCh <-chan struct{})
 }
 
-func NewServer(config *config.Config) Server {
-	return &server{
-		Port:     config.Port,
-		SaveDir:  config.SaveDir,
-		FileExt:  config.FileExt,
-		FileSize: config.FileSize,
-		FileUnit: config.FileUnit,
+func NewServer(opts ...ServerOption) Server {
+	s := newDefaultServer()
+	for _, apply := range opts {
+		apply(&s)
+	}
+	return &s
+}
+
+func newDefaultServer() server {
+	return server{
+		Port:     "8080",
+		SaveDir:  app.WorkDir(),
+		FileExt:  "*",
+		FileSize: "",
+		FileUnit: "",
+	}
+}
+
+type ServerOption func(server *server)
+
+func WithPort(port int) ServerOption {
+	return func(server *server) {
+		if 0 < port && port < 65535 {
+			server.Port = strconv.Itoa(port)
+		}
+	}
+}
+
+func WithSaveDir(saveDir string) ServerOption {
+	return func(server *server) {
+		if !strings.EqualFold(saveDir, "") {
+			if fs, err := os.Stat(saveDir); err == nil && fs.IsDir() {
+				server.SaveDir = saveDir
+			}
+		}
+	}
+}
+
+func WithFileExt(fileExt string) ServerOption {
+	return func(server *server) {
+		if !strings.EqualFold(fileExt, "") {
+			server.FileExt = fileExt
+		}
+	}
+}
+
+func WithFileSize(fileSize int) ServerOption {
+	return func(server *server) {
+		if fileSize > 0 {
+			server.FileSize = strconv.Itoa(fileSize)
+		}
+	}
+}
+
+func WithFileUnit(fileUnit int) ServerOption {
+	return func(server *server) {
+		if fileUnit > 0 {
+			server.FileUnit = strconv.Itoa(fileUnit)
+		}
 	}
 }
 

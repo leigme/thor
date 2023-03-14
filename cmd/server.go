@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 )
 
@@ -35,9 +36,21 @@ func (s *server) Execute() loki.Exec {
 		c := make(chan os.Signal)
 		signal.Notify(c, syscall.SIGTERM, syscall.SIGKILL)
 		ctx, cancel := context.WithCancel(context.Background())
-		ts := thor.NewServer(s.c)
+		ts := thor.NewServer(
+			thor.WithPort(str2Int(s.c.Port)),
+			thor.WithSaveDir(s.c.SaveDir),
+			thor.WithFileExt(s.c.FileExt),
+			thor.WithFileSize(str2Int(s.c.FileExt)),
+			thor.WithFileUnit(str2Int(s.c.FileSize)))
 		ts.Start(ctx.Done())
 		<-c
 		cancel()
 	}
+}
+
+func str2Int(s string) int {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	return 0
 }
