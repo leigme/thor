@@ -62,9 +62,9 @@ func (c *client) Upload(filename string, address string) error {
 	req, err := http.NewRequest("POST", address, reader)
 	req.Header.Set("Content-Type", contType)
 	resp, err := c.client.Do(req)
+	defer resp.Body.Close()
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
 	return nil
 }
